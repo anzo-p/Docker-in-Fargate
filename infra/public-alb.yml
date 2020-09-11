@@ -1,0 +1,64 @@
+Description: Run after Cloud. Creates an ALB into the public subnet
+
+Mappings:
+  LoadBalancerUrlParts:
+    ListenerProtocol:
+      Value: 'HTTP'
+    TargetGroupProtocol:
+      Value: 'HTTP'
+    Port:
+      Value: '80'          # the port you wish your Load Balancer to listen to / forward traffic from
+
+
+Resources:
+
+  LoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Name: 'alb-to-fargate'
+      Type: 'application'
+      Scheme: 'internet-facing'
+      Subnets:
+        - !ImportValue 'PublicSubnet1'
+        - !ImportValue 'PublicSubnet2'
+      SecurityGroups:
+        - !ImportValue PublicLoadBalancerSecurityGroup
+      Tags: 
+        - Key: 'Name'
+          Value: 'ALB-4-GenFargate'
+  
+  LoadBalancerListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: !FindInMap [ 'LoadBalancerUrlParts', 'ListenerProtocol', 'Value' ]
+      Port: !FindInMap [ 'LoadBalancerUrlParts', 'Port', 'Value' ] 
+      DefaultActions:
+        - Type: 'forward'
+          TargetGroupArn: !Ref DefaultTargetGroup
+  
+  DefaultTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Name: 'TargetGroupDefault'
+      VpcId: !ImportValue 'VPC'
+      Protocol: !FindInMap [ 'LoadBalancerUrlParts', 'TargetGroupProtocol', 'Value' ]
+      Port: !FindInMap [ 'LoadBalancerUrlParts', 'Port', 'Value' ]
+
+
+Outputs:
+  LoadBalancerDNS:
+    Description: Domain name for the loadbalancer
+    Value: !Join ['', [ !FindInMap [ 'LoadBalancerUrlParts', 'ListenerProtocol', 'Value' ],
+                        '://',
+                        !GetAtt LoadBalancer.DNSName,
+                        ':',
+                        !FindInMap [ 'LoadBalancerUrlParts', 'Port', 'Value'] ]]
+    Export:
+      Name: 'ALBDomainName'
+  
+  LoadBalancerListener:
+    Description: listener port
+    Value: !Ref LoadBalancerListener
+    Export:
+      Name: 'LoadBalancerListener'

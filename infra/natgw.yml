@@ -1,0 +1,43 @@
+Description: 'Run after Cloud. Creates a NAT Gateway and an IP for it for private subnet to access Internet'
+
+Resources:
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: !ImportValue VPC
+  
+  # only outgoing internet
+  NAT:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !ImportValue PublicSubnet1
+      Tags:
+        - Key: "Name"
+          Value: "NATGW1-4-GenFargate"
+  
+  PrivateRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !ImportValue VPC
+      Tags: 
+        - Key: "Name"
+          Value: "RT1-NAT-4-GenFargate"
+  
+  RouteTableAssocPrivateSubnet1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !ImportValue PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+  RouteTableAssocPrivateSubnet2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !ImportValue PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+  
+  InternetRoutePrivate1:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      NatGatewayId: !Ref NAT
+      DestinationCidrBlock: '0.0.0.0/0'

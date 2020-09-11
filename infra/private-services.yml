@@ -1,0 +1,143 @@
+Description: Run after ELB. Contains Fargate definitions for containers in the private subnet
+
+Mappings:
+  ContainerDefinitions:
+    ContainerImagePath:
+      Value: <path to Docker image, format image-resgitry/image-name>
+  ListenerRuleParts:
+    MainApplicationPath:
+      Value: '/api'
+  TargetGroupParts:
+    TargetGroupProtocol:
+      Value: 'HTTP'
+    HealthCheckPath:
+      Value: '/stat'       # endpoint that responds 200 OK to load balancer health checks
+  Endpoints:
+    ContainerPort:
+      Value: <port>        # the Dockerfile EXPOSE port
+
+
+Resources:
+  ECSCluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: 'my-fargate-cluster'
+      Tags:
+        - Key: "Name"
+          Value: "Cluster-4-GenFargate"
+  
+  ECSTask:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties:
+      Family: 'my-fargate-task'
+      Cpu: 256      # minimum
+      Memory: 512   # minimum
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !ImportValue ECSTaskExecutionRole
+      Tags:
+        - Key: "Name"
+          Value: "TaskDef-4-GenFargate"
+      
+      ContainerDefinitions:
+        - Name: first-app
+          Image: !FindInMap [ 'ContainerDefinitions', 'ContainerImagePath', 'Value' ] 
+          # DependsOn: 
+          Cpu: 256
+          Memory: 512
+          # MountPoints
+          PortMappings:
+            - ContainerPort: !FindInMap [ 'Endpoints', 'ContainerPort', 'Value' ] 
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: 'logs-4-GenFargate'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: 'sink'
+          # HealthCheck: 
+  
+  ECSService:
+    Type: 'AWS::ECS::Service'
+    DependsOn: ListenerRuleFargate
+    Properties:
+      ServiceName: my-fargate-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTask
+      LaunchType: FARGATE
+      DesiredCount: 2
+      DeploymentConfiguration:
+        MaximumPercent: 300
+        MinimumHealthyPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !ImportValue PrivateSubnet1
+            - !ImportValue PrivateSubnet2
+          SecurityGroups:
+            - !ImportValue PrivateContainersSecurityGroup
+      LoadBalancers:
+        # all values from ECSTask.Properties.ContainerDefinition[i].*
+        - ContainerName: first-app
+          ContainerPort: !FindInMap [ 'Endpoints', 'ContainerPort', 'Value' ] 
+          TargetGroupArn: !Ref TargetGroupFargate
+  
+  TargetGroupFargate:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Name: 'TargetGroupFargate'
+      VpcId: !ImportValue VPC
+      Port: !FindInMap [ 'Endpoints', 'ContainerPort', 'Value'] 
+      Protocol: !FindInMap [ 'TargetGroupParts', 'TargetGroupProtocol', 'Value' ]
+      Matcher:
+        HttpCode: 200-299
+      HealthCheckPath: !FindInMap [ 'TargetGroupParts', 'HealthCheckPath', 'Value'] 
+      HealthCheckProtocol: !FindInMap [ 'TargetGroupParts', 'TargetGroupProtocol', 'Value' ]
+      HealthCheckIntervalSeconds: 30   # 30 default for ip
+      #HealthCheckTimeoutSeconds: 6    # "must be 6 for HTTP"
+      #HealthyThresholdCount: 5        # 5 default for HTTP
+      TargetType: ip
+      Tags:
+      - Key: "Name"
+        Value: "ALB-TG-4-GenFargate"
+
+  ListenerRuleFargate:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      ListenerArn: !ImportValue LoadBalancerListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - !FindInMap [ 'ListenerRuleParts', 'MainApplicationPath', 'Value' ] 
+      Actions:
+        - TargetGroupArn: !Ref TargetGroupFargate
+          Type: forward
+  
+  CloudWatchLogsGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: 'logs-4-GenFargate'
+      RetentionInDays: 1
+
+
+Outputs:
+  Cluster:
+    Value: !Ref ECSCluster
+    Export:
+      Name: 'ECSCluster'
+  
+  TargetGroupFargate:
+    Description: loadbalancer tagret group
+    Value: !Ref TargetGroupFargate
+    Export:
+      Name: 'TargetGroupFargate'
+  
+  ApiEndpoint:
+    Description: The API Endpoint
+    Value: !Join ['', [ !ImportValue ALBDomainName,
+                        !FindInMap [ 'ListenerRuleParts', 'MainApplicationPath', 'Value' ] ]]
+    Export:
+      Name: 'TheApiEndpoint'

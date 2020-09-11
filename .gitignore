@@ -1,0 +1,11 @@
+.DS_Store
+.git
+
+node_modules/
+
+app/server.js
+
+Dockerfile
+package.json
+package-lock.json
+tsconfig.json
